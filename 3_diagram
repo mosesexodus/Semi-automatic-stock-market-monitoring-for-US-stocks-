@@ -1,2 +1,135 @@
-branch 
-hello world ...
+# 来自zhihu 博主 赛大花的程序
+
+import pandas as pd # 导入pandas库，用于数据处理和分析
+import yfinance as yf # 导入yfinance库，用于获取金融市场数据
+import matplotlib.pyplot as plt # 导入matplotlib库，用于数据可视化
+from matplotlib import rcParams # 从matplotlib导入rcParams，用于运行时配置参数
+import matplotlib.font_manager as fm # 导入font_manager，用于管理字体
+import os # 导入os模块，用于操作系统相关功能
+import numpy as np # 导入numpy库，用于数值计算
+
+# 配置matplotlib以支持中文显示和正确显示负号
+# 检查并安装中文字体，以确保在Colab环境中能正确显示中文
+# 定义字体路径和名称
+font_path = "/usr/share/fonts/truetype/liberation/SimHei.ttf" # 尝试使用Colab中可能预装的SimHei字体
+
+# 如果SimHei字体不存在，则安装中文字体（例如wqy-microhei）
+if not os.path.exists(font_path): # 检查SimHei字体是否存在
+    # 安装字体命令
+    !apt-get update -qq > /dev/null
+    !apt-get install -qq fonts-wqy-microhei > /dev/null
+    font_path = "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc" # 更新字体路径为安装后的字体
+
+# 加载字体并设置matplotlib参数
+if os.path.exists(font_path):
+    fm.fontManager.addfont(font_path) # 将字体添加到Matplotlib的字体管理器中
+    rcParams['font.family'] = fm.FontProperties(fname=font_path).get_name() # 设置字体为新安装或已存在的字体
+    print(f"使用字体: {rcParams['font.family']}") # 打印当前使用的字体
+else:
+    print("警告: 未能找到或安装中文字体，图表中的中文可能无法正常显示。") # 如果最终没有找到字体，则发出警告
+
+rcParams['axes.unicode_minus'] = False  # 解决matplotlib负号显示方块的问题
+
+# ------------------------------- #
+# 1. 获取 AAPL 历史行情           #
+# ------------------------------- #
+data = yf.Ticker("AAPL").history(period="2y")[['Close']]
+
+# ------------------------------- #
+# 2. SMA 与 EMA 计算及信号识别    #
+# ------------------------------- #
+data['SMA_20'] = data['Close'].rolling(window=20).mean()
+data['SMA_50'] = data['Close'].rolling(window=50).mean()
+data['EMA_20'] = data['Close'].ewm(span=20, adjust=False).mean()
+
+# 识别SMA金叉和死叉信号
+data['SMA_Signal'] = 0
+data['SMA_Signal'] = (data['SMA_20'] > data['SMA_50']).astype(int)
+data['SMA_Crossover'] = data['SMA_Signal'].diff()
+
+# ------------------------------- #
+# 3. MACD 指标计算及信号识别    #
+# ------------------------------- #
+short_ema = data['Close'].ewm(span=12, adjust=False).mean()
+long_ema = data['Close'].ewm(span=26, adjust=False).mean()
+data['MACD'] = short_ema - long_ema
+data['Signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+
+# 识别MACD金叉和死叉信号
+data['MACD_Cross'] = np.where(data['MACD'] > data['Signal'], 1, 0)
+data['MACD_SignalChange'] = data['MACD_Cross'].diff()
+
+# ------------------------------- #
+# 4. RSI 指标计算及信号识别     #
+# ------------------------------- #
+def compute_rsi(series, window=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window).mean()
+    rs = gain / loss.replace(0, 1e-10)
+    return 100 - (100 / (1 + rs))
+
+data['RSI_14'] = compute_rsi(data['Close'])
+
+# 识别RSI买卖信号
+buy_signals_rsi = data[(data['RSI_14'].shift(1) <= 30) & (data['RSI_14'] > 30)]
+sell_signals_rsi = data[(data['RSI_14'].shift(1) >= 70) & (data['RSI_14'] < 70)]
+
+# ------------------------------- #
+# 5. 综合可视化                   #
+# ------------------------------- #
+fig, axes = plt.subplots(3, 1, figsize=(14, 12), sharex=True) # 创建3行1列的子图，共享x轴
+
+# 子图1: 价格与均线 (SMA/EMA) + 金叉/死叉
+axes[0].plot(data['Close'], label='收盘价', color='blue', linewidth=1.5)
+axes[0].plot(data['SMA_20'], label='SMA 20', color='orange', linewidth=1.5)
+axes[0].plot(data['SMA_50'], label='SMA 50', color='green', linewidth=1.5)
+axes[0].plot(data['EMA_20'], label='EMA 20', color='red', linewidth=1.5)
+
+# 标记SMA金叉 (买入信号)
+sma_golden_cross = data[data['SMA_Crossover'] == 1]
+axes[0].scatter(sma_golden_cross.index, sma_golden_cross['SMA_20'], marker='^', color='g', s=100, label='SMA金叉 (买入信号)', zorder=5)
+# 标记SMA死叉 (卖出信号)
+sma_death_cross = data[data['SMA_Crossover'] == -1]
+axes[0].scatter(sma_death_cross.index, sma_death_cross['SMA_20'], marker='v', color='r', s=100, label='SMA死叉 (卖出信号)', zorder=5)
+
+axes[0].set_title("AAPL 收盘价与移动平均线 (SMA/EMA) + 交叉信号")
+axes[0].set_ylabel("价格")
+axes[0].legend(loc='upper left')
+axes[0].grid(True, linestyle=':', alpha=0.7)
+
+# 子图2: MACD 与 Signal 线 + 金叉/死叉
+axes[1].plot(data['MACD'], label='MACD 线', color='blue', linewidth=1.5)
+axes[1].plot(data['Signal'], label='Signal 线', color='orange', linewidth=1.5)
+axes[1].axhline(0, color='gray', linestyle='--', label='零轴', linewidth=0.8)
+
+# 提取MACD买入信号点 (MACD_SignalChange == 2)
+macd_buy_signals = data[data['MACD_SignalChange'] == 2]
+axes[1].scatter(macd_buy_signals.index, macd_buy_signals['MACD'], marker='^', color='g', s=100, label='MACD金叉 (买入信号)', zorder=5)
+# 提取MACD卖出信号点 (MACD_SignalChange == -2)
+macd_sell_signals = data[data['MACD_SignalChange'] == -2]
+axes[1].scatter(macd_sell_signals.index, macd_sell_signals['MACD'], marker='v', color='r', s=100, label='MACD死叉 (卖出信号)', zorder=5)
+
+axes[1].set_title("MACD 指标及交叉信号")
+axes[1].set_ylabel("MACD 值")
+axes[1].legend(loc='upper left')
+axes[1].grid(True, linestyle=':', alpha=0.7)
+
+# 子图3: RSI 指标及买卖信号
+axes[2].plot(data['RSI_14'], label='RSI 14', color='purple', linewidth=1.5)
+axes[2].axhline(70, color='red', linestyle='--', label='超买区 (70)', linewidth=0.8)
+axes[2].axhline(30, color='green', linestyle='--', label='超卖区 (30)', linewidth=0.8)
+
+# 在图表上标记RSI买入信号点
+axes[2].scatter(buy_signals_rsi.index, buy_signals_rsi['RSI_14'], marker='^', color='g', s=100, label='RSI买入信号 (脱离超卖)', zorder=5)
+# 在图表上标记RSI卖出信号点
+axes[2].scatter(sell_signals_rsi.index, sell_signals_rsi['RSI_14'], marker='v', color='r', s=100, label='RSI卖出信号 (跌破超买)', zorder=5)
+
+axes[2].set_title("RSI 指标及买卖信号")
+axes[2].set_xlabel("日期")
+axes[2].set_ylabel("RSI")
+axes[2].legend(loc='upper left')
+axes[2].grid(True, linestyle=':', alpha=0.7)
+
+plt.tight_layout() # 自动调整子图参数，使之填充整个图像区域，避免重叠
+plt.show() # 显示图表
