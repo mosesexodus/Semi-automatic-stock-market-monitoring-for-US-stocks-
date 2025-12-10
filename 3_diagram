@@ -1,4 +1,4 @@
-# 来自zhihu 博主 赛大花的程序
+#来自zhihu 博主 赛大花的程序 并安排了提示性箭头
 
 import pandas as pd # 导入pandas库，用于数据处理和分析
 import yfinance as yf # 导入yfinance库，用于获取金融市场数据
